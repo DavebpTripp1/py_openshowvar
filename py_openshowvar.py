@@ -7,12 +7,21 @@ import sys
 import struct
 import random
 import socket
+import time
+import sched
+import schedule
+
+from timeloop import Timeloop
+from datetime import timedelta
+
+tl = Timeloop()
 
 __version__ = '1.1.6'
 ENCODING = 'UTF-8'
 
 PY2 = sys.version_info[0] == 2
-if PY2: input = raw_input
+if PY2:
+    input = raw_input
 
 
 class openshowvar(object):
@@ -36,6 +45,14 @@ class openshowvar(object):
             return False
 
     can_connect = property(test_connection)
+
+    def keep_alive(self, var='$OV_PRO'):
+        self.varname = var if PY2 else var.encode(ENCODING)
+        debug = False
+        req = self._pack_read_req()
+        self._send_req(req)
+
+    ping = property(keep_alive)
 
     def read(self, var, debug=True):
         if not isinstance(var, str):
@@ -82,7 +99,7 @@ class openshowvar(object):
             flag,
             var_name_len,
             self.varname
-            )
+        )
 
     def _pack_write_req(self):
         var_name_len = len(self.varname)
@@ -99,23 +116,25 @@ class openshowvar(object):
             self.varname,
             value_len,
             self.value
-            )
+        )
 
     def _read_rsp(self, debug=False):
-        if self.rsp is None: return None
+        if self.rsp is None:
+            return None
         var_value_len = len(self.rsp) - struct.calcsize('!HHBH') - 3
         result = struct.unpack('!HHBH'+str(var_value_len)+'s'+'3s', self.rsp)
         _msg_id, body_len, flag, var_value_len, var_value, isok = result
         if debug:
             print('[DEBUG]', result)
         if result[-1].endswith(b'\x01') and _msg_id == self.msg_id:
-            self.msg_id = (self.msg_id + 1) % 65536  # format char 'H' is 2 bytes long
+            # format char 'H' is 2 bytes long
+            self.msg_id = (self.msg_id + 1) % 65536
             return var_value
 
     def close(self):
         self.sock.close()
 
-
+ 
 ############### test ###############
 
 
@@ -127,12 +146,22 @@ def run_shell(ip, port):
         sys.exit(-1)
     print('\nConnected KRC Name: ', end=' ')
     client.read('$ROBNAME[]', False)
+
+    @tl.job(interval=timedelta(seconds=25))
+    def KRC_Robot_Ping():
+        print ('Keep robot connection alive : {}'.format(time.ctime()))
+        client.ping
+    tl.start(block=False)
+
     while True:
-        data = input('\nInput var_name [, var_value]\n(`q` for quit): ')
+        data = input('\nInput var_name [, var_value]\n(`q` for quit) \n(`p` to ping):')
         if data.lower() == 'q':
             print('Bye')
             client.close()
             break
+        elif data.lower() == 'p':
+            print('ping')
+            client.ping
         else:
             parts = data.split(',')
             if len(parts) == 1:
@@ -142,7 +171,6 @@ def run_shell(ip, port):
 
 
 if __name__ == '__main__':
-    ip = input('IP Address: ')
-    port = input('Port: ')
+    ip = '192.168.133.9'#input('IP Address: ')
+    port = 7000 #input('Port: ')
     run_shell(ip, int(port))
-
